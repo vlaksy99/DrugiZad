@@ -4,48 +4,123 @@ using System.Collections.Generic;
 using System.Linq;
 using System.ServiceModel;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 
-namespace K_Klijent
+namespace K_SistemMonitor
 {
     class Program
     {
+        internal static EStanjeServera stanjePrvog = EStanjeServera.Nepoznato; 
+        internal static EStanjeServera stanjeDrugog = EStanjeServera.Nepoznato;
+
+        internal static IStudentskaSluzba prviServis = null;
+        internal static IStudentskaSluzba drugiServis = null;
+
+        internal static IBezbednosniMehanizmi prviServisBezbednost = null;
+        internal static IBezbednosniMehanizmi drugiServisBezbednost = null;
+
         static void Main(string[] args)
         {
+            ServiceHost host = new ServiceHost(typeof(ServisStudentskeSluzbeMonitor));
+            host.Open();
+            Console.WriteLine("Servis je uspesno otvoren");
 
-            ChannelFactory<IBezbednosniMehanizmi> channelFactoryBezbednost
-                      = new ChannelFactory<IBezbednosniMehanizmi>("bezbednost");
-
-            IBezbednosniMehanizmi proxyBezbednost = channelFactoryBezbednost.CreateChannel();
-            string token = "";
+            IStanjeServisa prvi = null;
+            IStanjeServisa drugi = null;
             try
             {
-                token = proxyBezbednost.Autentifikacija("admin", "pr3Ax4dmin");
-                Console.WriteLine("Uspesno logovanje");
+                ChannelFactory<IStanjeServisa> cfPrvi
+                = new ChannelFactory<IStanjeServisa>("prvi");
+                prvi = cfPrvi.CreateChannel();
+                prvi.AzuriranjeStanja(EStanjeServera.Primarni);
+
+                ChannelFactory<IStudentskaSluzba> cfPrviSSluzba
+                = new ChannelFactory<IStudentskaSluzba>("prviSSluzba");
+
+                prviServis = cfPrviSSluzba.CreateChannel();
+
+                ChannelFactory<IBezbednosniMehanizmi> cfPrviBezbednost
+                    = new ChannelFactory<IBezbednosniMehanizmi>("prviBezbednost");
+
+                prviServisBezbednost = cfPrviBezbednost.CreateChannel();
             }
-            catch (Exception e)
+            catch (CommunicationException cex)
             {
-                Console.WriteLine(e.Message);
+                Console.WriteLine("Prvi servis nedostupan. Razlog: "
+                + cex.Message);
             }
 
-            ChannelFactory<IStudentskaSluzba> channelFactory
-                      = new ChannelFactory<IStudentskaSluzba>("studentskaSluzba");
-
-            IStudentskaSluzba proxy = channelFactory.CreateChannel();
             try
             {
-                proxy.DodajStudenta(token, new Student("Jovan", "Jovic", "123"));
-                Console.WriteLine("Uspesno dodavanje studenta");
+
+                ChannelFactory<IStanjeServisa> cfDrugi
+                = new ChannelFactory<IStanjeServisa>("drugi");
+                drugi = cfDrugi.CreateChannel();
+                if (prvi is null)
+                    drugi.AzuriranjeStanja(EStanjeServera.Primarni);
+                drugi.AzuriranjeStanja(EStanjeServera.Sekundarni);
+
+                ChannelFactory<IStudentskaSluzba> cfDrugiSSluzba
+                = new ChannelFactory<IStudentskaSluzba>("drugiSSluzba");
+
+                drugiServis = cfDrugiSSluzba.CreateChannel();
+
+                ChannelFactory<IBezbednosniMehanizmi> cfDrugiBezbednost
+                        = new ChannelFactory<IBezbednosniMehanizmi>("drugiBezbednost");
+
+                drugiServisBezbednost = cfDrugiBezbednost.CreateChannel();
             }
-            catch (FaultException<BezbednosniIzuzetak> ex)
+            catch (CommunicationException cex)
             {
-                Console.WriteLine("Error : " + ex.Detail.Poruka);
+                Console.WriteLine("Drugi servis nedostupan. Razlog: "
+                + cex.Message);
             }
-            catch (Exception e)
+
+            if (prvi is null && drugi is null)
+                {
+                    Console.WriteLine("Neuspelo povezivanje na servise.");
+                    Environment.Exit(0);
+                }
+
+            while (true)
             {
-                Console.WriteLine(e.Message);
+                try
+                {
+                    stanjePrvog = prvi.ProveraStanja();
+                }
+                catch (Exception ex)
+                {
+                    stanjePrvog = EStanjeServera.Nepoznato;
+                    Console.WriteLine("Greska na primarnom: " + ex.Message);
+                }
+                try
+                {
+                    stanjeDrugog = drugi.ProveraStanja();
+                }
+                catch (Exception ex)
+                {
+                    stanjeDrugog = EStanjeServera.Nepoznato;
+                    Console.WriteLine("Greska na sekundarnom: " + ex.Message);
+                }
+                Console.WriteLine("Stanja servisa.");
+                Console.WriteLine("- primarni: " + stanjePrvog.ToString());
+                Console.WriteLine("- sekundarni: " + stanjeDrugog.ToString());
+                if (stanjePrvog == EStanjeServera.Nepoznato)
+                {
+                    if (stanjeDrugog == EStanjeServera.Sekundarni)
+                    {
+                        drugi.AzuriranjeStanja(EStanjeServera.Primarni);
+                        Console.WriteLine("Sekundarni proglasen primarnim.");
+                    }
+                }
+                if (stanjeDrugog == EStanjeServera.Nepoznato)
+                {
+                    Console.WriteLine("Sekundarni nije operativan.");
+                    Environment.Exit(0);
+                }
+                Thread.Sleep(5000);
             }
-            Console.ReadKey();
         }
     }
 }
